@@ -68,7 +68,7 @@ export function AppShell({
             return (
               <Link
                 key={item.to}
-                to={item.to}
+                to={item.to as any}
                 className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   active
                     ? "bg-sidebar-accent text-sidebar-accent-foreground"
@@ -106,7 +106,7 @@ export function AppShell({
           {NAV.map((item) => (
             <Link
               key={item.to}
-              to={item.to}
+              to={item.to as any}
               className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium ${
                 pathname === item.to
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"

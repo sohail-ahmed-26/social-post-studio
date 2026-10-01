@@ -15,9 +15,10 @@ import {
 import { useActiveBrand } from "@/lib/use-brand";
 
 export const Route = createFileRoute("/_authenticated/create")({
-  validateSearch: (search: Record<string, unknown>): { post?: string } => ({
-    post: typeof search.post === "string" ? search.post : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): { post?: string } => {
+    if (typeof search["post"] === "string") return { post: search["post"] };
+    return {};
+  },
   head: () => ({
     meta: [
       { title: "Create post — SocialPilot" },
@@ -51,6 +52,9 @@ function CreatePage() {
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [scheduledAt, setScheduledAt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [aiHeadline, setAiHeadline] = useState("");
+  const [aiSubtext, setAiSubtext] = useState("");
 
   const { data: templates } = useQuery({
     queryKey: ["templates"],
@@ -96,7 +100,7 @@ function CreatePage() {
     );
   }
 
-  async function save(mode: "draft" | "schedule") {
+  async function save(mode: "draft" | "schedule", skipNavigate = false): Promise<string | undefined> {
     if (!brandId) {
       toast.error("No brand selected yet.");
       return;
@@ -152,12 +156,66 @@ function CreatePage() {
       }
 
       await queryClient.invalidateQueries();
-      toast.success(mode === "schedule" ? "Post scheduled" : "Draft saved");
-      navigate({ to: mode === "schedule" ? "/calendar" : "/library" });
+      if (!skipNavigate) {
+        toast.success(mode === "schedule" ? "Post scheduled" : "Draft saved");
+        navigate({ to: (mode === "schedule" ? "/calendar" : "/library") as any });
+      }
+      return savedId;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not save the post");
+      return undefined;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function generateWithAI() {
+    if (!topic.trim()) {
+      toast.error("Please enter a topic before generating with AI.");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const savedId = await save("draft", true);
+      if (!savedId) return; // toast already shown by save()
+
+      const res = await fetch("http://127.0.0.1:8787/content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: savedId }),
+      });
+
+      if (!res.ok) {
+        if (res.status === 404) throw new Error("Agent server not found");
+      }
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      if (data.caption) {
+        let finalCaption = data.caption;
+        if (data.hashtags && data.hashtags.length > 0) {
+          const extraTags = data.hashtags
+            .map((t: string) => (t.startsWith("#") ? t : `#${t}`))
+            .filter((t: string) => !finalCaption.includes(t))
+            .join(" ");
+          if (extraTags) {
+            finalCaption += `\n\n${extraTags}`;
+          }
+        }
+        setCaption(finalCaption);
+      }
+      if (data.headline) setAiHeadline(data.headline);
+      if (data.subtext) setAiSubtext(data.subtext);
+
+      toast.success("AI Generation complete!");
+    } catch (err: any) {
+      if (err.message.includes("fetch failed") || err.message === "Failed to fetch") {
+        toast.error("Start the agent server: cd agents && npm run agent:server");
+      } else {
+        toast.error(err.message || "Failed to generate content");
+      }
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -199,6 +257,14 @@ function CreatePage() {
                 placeholder="Product launch"
                 className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
               />
+              <button
+                type="button"
+                disabled={generating || busy}
+                onClick={generateWithAI}
+                className="mt-2 w-full rounded-lg bg-primary/10 text-primary py-2 text-sm font-medium transition-colors hover:bg-primary/20 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {generating ? "Generating..." : "✨ Generate with AI"}
+              </button>
             </div>
           </div>
 
@@ -254,6 +320,12 @@ function CreatePage() {
             <label className="eyebrow block" htmlFor="caption">
               Caption
             </label>
+            {aiHeadline && (
+              <div className="mb-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
+                <div className="font-semibold text-primary">{aiHeadline}</div>
+                <div className="text-muted-foreground text-xs mt-0.5">{aiSubtext}</div>
+              </div>
+            )}
             <textarea
               id="caption"
               rows={5}

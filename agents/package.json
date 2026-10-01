@@ -7,7 +7,9 @@
     "typecheck": "tsc --noEmit",
     "designer:test": "tsx designer/src/test.ts",
     "scheduler": "tsx scheduler/src/worker.ts",
-    "main": "tsx main/src/index.ts"
+    "main": "tsx main/src/index.ts",
+    "content": "tsx main/src/content-cli.ts",
+    "agent:server": "tsx main/src/server.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
