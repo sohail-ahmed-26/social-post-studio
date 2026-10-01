@@ -30,3 +30,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# SocialPilot agents
+agents/.env
+agents/node_modules/
+agents/output/
+.env.local
