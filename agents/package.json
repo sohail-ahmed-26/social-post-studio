@@ -1,0 +1,22 @@
+{
+  "name": "socialpilot-agents",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:db": "tsx shared/check-db.ts",
+    "typecheck": "tsc --noEmit",
+    "designer:test": "tsx designer/src/test.ts",
+    "scheduler": "tsx scheduler/src/worker.ts",
+    "main": "tsx main/src/index.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.47.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

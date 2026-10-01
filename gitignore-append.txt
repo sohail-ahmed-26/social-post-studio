@@ -1,0 +1,6 @@
+
+# SocialPilot agents
+agents/.env
+agents/node_modules/
+agents/output/
+.env.local
