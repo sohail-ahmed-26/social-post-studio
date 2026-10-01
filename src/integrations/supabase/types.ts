@@ -14,13 +14,274 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      smm_brands: {
+        Row: {
+          colors: Json
+          created_at: string
+          id: string
+          logo_url: string | null
+          name: string
+          tone: string
+          user_id: string
+        }
+        Insert: {
+          colors?: Json
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name: string
+          tone?: string
+          user_id: string
+        }
+        Update: {
+          colors?: Json
+          created_at?: string
+          id?: string
+          logo_url?: string | null
+          name?: string
+          tone?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      smm_post_assets: {
+        Row: {
+          created_at: string
+          height: number | null
+          id: string
+          image_url: string
+          post_id: string
+          width: number | null
+        }
+        Insert: {
+          created_at?: string
+          height?: number | null
+          id?: string
+          image_url: string
+          post_id: string
+          width?: number | null
+        }
+        Update: {
+          created_at?: string
+          height?: number | null
+          id?: string
+          image_url?: string
+          post_id?: string
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "smm_post_assets_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "smm_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      smm_posts: {
+        Row: {
+          brand_id: string
+          caption: string
+          created_at: string
+          hashtags: string[]
+          id: string
+          platforms: string[]
+          status: string
+          template_id: string | null
+          topic: string
+        }
+        Insert: {
+          brand_id: string
+          caption?: string
+          created_at?: string
+          hashtags?: string[]
+          id?: string
+          platforms?: string[]
+          status?: string
+          template_id?: string | null
+          topic?: string
+        }
+        Update: {
+          brand_id?: string
+          caption?: string
+          created_at?: string
+          hashtags?: string[]
+          id?: string
+          platforms?: string[]
+          status?: string
+          template_id?: string | null
+          topic?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "smm_posts_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "smm_brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "smm_posts_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "smm_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      smm_publish_logs: {
+        Row: {
+          created_at: string
+          error: string | null
+          id: string
+          platform: string
+          response: Json | null
+          schedule_id: string
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          id?: string
+          platform: string
+          response?: Json | null
+          schedule_id: string
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          id?: string
+          platform?: string
+          response?: Json | null
+          schedule_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "smm_publish_logs_schedule_id_fkey"
+            columns: ["schedule_id"]
+            isOneToOne: false
+            referencedRelation: "smm_schedules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      smm_schedules: {
+        Row: {
+          attempts: number
+          created_at: string
+          id: string
+          platform: string
+          post_id: string
+          scheduled_at: string
+          status: string
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          id?: string
+          platform: string
+          post_id: string
+          scheduled_at: string
+          status?: string
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          id?: string
+          platform?: string
+          post_id?: string
+          scheduled_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "smm_schedules_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "smm_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      smm_social_accounts: {
+        Row: {
+          access_token_encrypted: string | null
+          account_name: string | null
+          brand_id: string
+          created_at: string
+          expires_at: string | null
+          external_id: string | null
+          id: string
+          platform: string
+          status: string
+        }
+        Insert: {
+          access_token_encrypted?: string | null
+          account_name?: string | null
+          brand_id: string
+          created_at?: string
+          expires_at?: string | null
+          external_id?: string | null
+          id?: string
+          platform: string
+          status?: string
+        }
+        Update: {
+          access_token_encrypted?: string | null
+          account_name?: string | null
+          brand_id?: string
+          created_at?: string
+          expires_at?: string | null
+          external_id?: string | null
+          id?: string
+          platform?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "smm_social_accounts_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "smm_brands"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      smm_templates: {
+        Row: {
+          category: string
+          created_at: string
+          css: string
+          html: string
+          id: string
+          name: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          css?: string
+          html?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          css?: string
+          html?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      smm_owns_brand: { Args: { _brand_id: string }; Returns: boolean }
+      smm_owns_post: { Args: { _post_id: string }; Returns: boolean }
+      smm_owns_schedule: { Args: { _schedule_id: string }; Returns: boolean }
     }
     Enums: {
       [_ in never]: never
