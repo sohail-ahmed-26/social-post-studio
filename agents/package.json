@@ -13,7 +13,10 @@
     "image:test": "tsx designer/src/image-test.ts",
     "fb:test": "tsx publisher/src/facebook-test.ts",
     "threads:token": "tsx publisher/src/threads-token.ts",
-    "threads:test": "tsx publisher/src/threads-test.ts"
+    "threads:test": "tsx publisher/src/threads-test.ts",
+    "x:test": "tsx publisher/src/x-test.ts",
+    "connect:status": "tsx shared/connect-status.ts",
+    "connect:save": "tsx shared/connect-save.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

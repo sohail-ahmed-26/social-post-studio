@@ -1,6 +1,6 @@
 // OWNER ki file: agents ke darmiyan contract.
 export type PostStatus = "draft" | "designed" | "scheduled" | "publishing" | "published" | "failed";
-export type Platform = "instagram" | "facebook" | "linkedin";
+export type Platform = "instagram" | "facebook" | "linkedin" | "threads" | "x";
 export type ImageSize = "square" | "portrait" | "landscape";
 
 export const IMAGE_SIZES: Record<ImageSize, { width: number; height: number }> = {

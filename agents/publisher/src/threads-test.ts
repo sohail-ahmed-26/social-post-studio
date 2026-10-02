@@ -1,183 +1,144 @@
-import 'dotenv/config';
+import { getEnv } from "../../shared/env";
 
-async function run() {
-  const token = process.env.THREADS_ACCESS_TOKEN;
-  const userId = process.env.THREADS_USER_ID;
+const text = process.argv[2];
+const imageUrl = process.argv[3];
 
-  if (!token || !userId) {
-    console.error("Error: THREADS_ACCESS_TOKEN and THREADS_USER_ID must be set in environment variables.");
+if (!text) {
+  console.error("Usage: npm run threads:test -- <text> [imageUrl]");
+  process.exit(1);
+}
+
+if (text.length > 500) {
+  console.error("Text exceeds 500 characters.");
+  process.exit(1);
+}
+
+const appId = getEnv("THREADS_APP_ID");
+const redirectUri = getEnv("THREADS_REDIRECT_URI");
+const accessToken = getEnv("THREADS_ACCESS_TOKEN");
+let userId = getEnv("THREADS_USER_ID");
+
+if (!accessToken) {
+  if (!appId || !redirectUri) {
+    console.error("Missing THREADS_APP_ID or THREADS_REDIRECT_URI. Cannot generate auth URL.");
     process.exit(1);
   }
+  const authUrl = `https://threads.net/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent("threads_basic,threads_content_publish")}&response_type=code`;
+  console.error(`Missing THREADS_ACCESS_TOKEN.`);
+  console.error(`Please open this URL in your browser:\n${authUrl}`);
+  console.error(`Click Allow, copy the code from the address bar, and run:`);
+  console.error(`npm run threads:token -- <code>`);
+  process.exit(1);
+}
 
-  const args = process.argv.slice(2);
-  const text = args[0];
-  const imageUrl = args[1];
+async function sleep(ms: number) {
+  return new Promise(r => setTimeout(r, ms));
+}
 
-  if (!text) {
-    console.error("Usage: npm run threads:test -- \"text\" [imageUrl]");
-    process.exit(1);
+async function main() {
+  if (!userId) {
+    const meRes = await fetch(`https://graph.threads.net/v1.0/me?fields=id,username&access_token=${encodeURIComponent(accessToken!)}`);
+    if (!meRes.ok) {
+      console.error("Failed to fetch user info.", await meRes.text());
+      process.exit(1);
+    }
+    const meJson = await meRes.json();
+    userId = meJson.id;
+    console.log(`Posting as @${meJson.username}`);
+  } else {
+    console.log("Posting to Threads...");
   }
 
-  if (text.length > 500) {
-    console.error(`Error: Text is too long (${text.length} characters). Threads limits posts to 500 characters.`);
-    process.exit(1);
+  // Create Container
+  const containerUrl = new URL(`https://graph.threads.net/v1.0/${userId}/threads`);
+  containerUrl.searchParams.append("access_token", accessToken!);
+  containerUrl.searchParams.append("text", text);
+  if (imageUrl) {
+    containerUrl.searchParams.append("media_type", "IMAGE");
+    containerUrl.searchParams.append("image_url", imageUrl);
+  } else {
+    containerUrl.searchParams.append("media_type", "TEXT");
   }
 
-  const getAbortSignal = () => {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 30000);
-    return controller.signal;
-  };
+  const cRes = await fetch(containerUrl.toString(), { method: "POST" });
+  if (!cRes.ok) {
+    await handleError(cRes, "Create Container");
+  }
 
-  const sanitizeError = (data: any) => {
-    let msg = data?.error?.message || data?.error_message || "Unknown error";
-    msg = msg.replace(new RegExp(token, 'g'), "[REDACTED_TOKEN]");
-    const code = data?.error?.code || data?.error_code;
-    
-    let hint = "";
-    if (code === 190) hint = " (Hint: Token invalid or expired)";
-    else if (code === 10 || code === 200) hint = " (Hint: Permission missing or the Threads Tester invite was not accepted)";
+  const cJson = await cRes.json();
+  const containerId = cJson.id;
 
-    return `Meta Error: ${msg}\nCode: ${code}${hint}`;
-  };
-
-  let containerId: string | null = null;
-
-  try {
-    // 1) Get username
-    const meUrl = new URL(`https://graph.threads.net/v1.0/${userId}`);
-    meUrl.searchParams.append("fields", "id,username");
-    meUrl.searchParams.append("access_token", token);
-
-    const meRes = await fetch(meUrl.toString(), { signal: getAbortSignal() });
-    const meData = await meRes.json();
-
-    if (!meRes.ok || meData.error) {
-      console.error("Failed to fetch user profile:");
-      console.error(sanitizeError(meData));
-      process.exit(1);
-    }
-
-    console.log(`Posting as @${meData.username}`);
-
-    // 2) Create container
-    const createUrl = `https://graph.threads.net/v1.0/${userId}/threads`;
-    const createData = new FormData();
-    createData.append("access_token", token);
-    createData.append("text", text);
-    
-    if (imageUrl) {
-      createData.append("media_type", "IMAGE");
-      createData.append("image_url", imageUrl);
-    } else {
-      createData.append("media_type", "TEXT");
-    }
-
-    const createRes = await fetch(createUrl, {
-      method: "POST",
-      body: createData,
-      signal: getAbortSignal()
-    });
-    
-    const createJson = await createRes.json();
-    if (!createRes.ok || createJson.error) {
-      console.error("Failed to create container:");
-      console.error(sanitizeError(createJson));
-      process.exit(1);
-    }
-
-    containerId = createJson.id;
-    if (!containerId) {
-      console.error("Error: Container ID was not returned.");
-      process.exit(1);
-    }
-
-    // 3) Polling status
-    if (imageUrl) {
-      let isFinished = false;
-      let attempts = 0;
-      while (attempts < 20) {
-        attempts++;
-        await new Promise(r => setTimeout(r, 3000));
-        
-        const statusUrl = new URL(`https://graph.threads.net/v1.0/${containerId}`);
-        statusUrl.searchParams.append("fields", "status");
-        statusUrl.searchParams.append("access_token", token);
-
-        const statusRes = await fetch(statusUrl.toString(), { signal: getAbortSignal() });
+  if (imageUrl) {
+    let status = "";
+    let attempts = 0;
+    while (status !== "FINISHED" && attempts < 20) {
+      await sleep(3000);
+      const statusRes = await fetch(`https://graph.threads.net/v1.0/${containerId}?fields=status&access_token=${encodeURIComponent(accessToken!)}`);
+      if (statusRes.ok) {
         const statusJson = await statusRes.json();
-
-        if (!statusRes.ok || statusJson.error) {
-          throw new Error(`Failed to check container status:\n${sanitizeError(statusJson)}`);
+        status = statusJson.status;
+        if (status === "ERROR") {
+          console.error(`Container ${containerId} failed with status ERROR.`);
+          console.error("Post did NOT go out.");
+          process.exit(1);
         }
-
-        const status = statusJson.status;
-        if (status === "FINISHED") {
-          isFinished = true;
-          break;
-        } else if (status === "ERROR" || status === "EXPIRED") {
-          throw new Error(`Container processing failed with status: ${status}`);
-        }
-        // status could be IN_PROGRESS or PUBLISHED
       }
-
-      if (!isFinished) {
-        throw new Error("Container processing timed out after 60 seconds.");
-      }
-    } else {
-      await new Promise(r => setTimeout(r, 3000));
+      attempts++;
     }
-
-    // 4) Publish
-    const pubUrl = `https://graph.threads.net/v1.0/${userId}/threads_publish`;
-    const pubData = new FormData();
-    pubData.append("creation_id", containerId);
-    pubData.append("access_token", token);
-
-    const pubRes = await fetch(pubUrl, {
-      method: "POST",
-      body: pubData,
-      signal: getAbortSignal()
-    });
-    
-    const pubJson = await pubRes.json();
-    if (!pubRes.ok || pubJson.error) {
-      throw new Error(`Failed to publish container:\n${sanitizeError(pubJson)}`);
+    if (status !== "FINISHED") {
+      console.error(`Container ${containerId} did not finish in time.`);
+      console.error("Post did NOT go out.");
+      process.exit(1);
     }
+  } else {
+    await sleep(3000); // Wait 3s for TEXT
+  }
 
-    const postId = pubJson.id;
+  // Publish Container
+  const pubUrl = new URL(`https://graph.threads.net/v1.0/${userId}/threads_publish`);
+  pubUrl.searchParams.append("access_token", accessToken!);
+  pubUrl.searchParams.append("creation_id", containerId);
 
-    // 5) Fetch permalink
-    const postUrl = new URL(`https://graph.threads.net/v1.0/${postId}`);
-    postUrl.searchParams.append("fields", "permalink");
-    postUrl.searchParams.append("access_token", token);
+  const pRes = await fetch(pubUrl.toString(), { method: "POST" });
+  if (!pRes.ok) {
+    console.error(`Failed to publish container ${containerId}.`);
+    console.error("Post did NOT go out.");
+    await handleError(pRes, "Publish Container");
+  }
 
-    const postRes = await fetch(postUrl.toString(), { signal: getAbortSignal() });
-    const postJson = await postRes.json();
+  const pJson = await pRes.json();
+  const id = pJson.id;
 
-    if (!postRes.ok || postJson.error) {
-      console.log(`\nSuccess! Post ID: ${postId}`);
-      console.log(`Failed to fetch permalink:\n${sanitizeError(postJson)}`);
-    } else {
-      console.log(`\nSuccess! Post ID: ${postId}`);
-      console.log(`Permalink: ${postJson.permalink}`);
-    }
-
-  } catch (error: any) {
-    if (error.name === "AbortError") {
-      console.error("Error: Request timed out after 30 seconds.");
-    } else {
-      let msg = error.message.replace(new RegExp(token, 'g'), "[REDACTED_TOKEN]");
-      console.error(msg);
-    }
-
-    if (containerId) {
-      console.error(`\nContainer ID: ${containerId}`);
-      console.error("The post did NOT go out. Do not blindly retry as the container might still be processing or failed.");
-    }
-
-    process.exit(1);
+  // Get permalink
+  const permRes = await fetch(`https://graph.threads.net/v1.0/${id}?fields=permalink&access_token=${encodeURIComponent(accessToken!)}`);
+  if (permRes.ok) {
+    const permJson = await permRes.json();
+    console.log(`Success! Post ID: ${id}`);
+    console.log(permJson.permalink);
+  } else {
+    console.log(`Success! Post ID: ${id}`);
   }
 }
 
-run();
+async function handleError(res: Response, context: string) {
+  let detail = "";
+  try {
+    const json = await res.json();
+    detail = json.error?.message || JSON.stringify(json);
+    const code = json.error?.code;
+    const subcode = json.error?.error_subcode;
+    
+    console.error(`Error in ${context}: ${detail} (Code: ${code}, Subcode: ${subcode})`);
+    if (code === 190) {
+      console.error("Hint: Token expired or invalid.");
+    } else if (code === 10 || code === 200) {
+      console.error("Hint: Permission missing or Threads Tester invite not accepted.");
+    }
+  } catch (e) {
+    detail = await res.text();
+    console.error(`Error in ${context}: ${res.statusText} - ${detail} (Status: ${res.status})`);
+  }
+  process.exit(1);
+}
+
+main().catch(console.error);

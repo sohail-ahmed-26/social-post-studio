@@ -1,1 +1,0 @@
-import { getSupabase } from "./shared/supabase.ts"; (async () => { const sb = await getSupabase(); const { data, error } = await sb.storage.from("post-images").createSignedUrl("2452a414-b753-42e7-aac9-89e0731fb0c4/f9ef418c-0c4a-48d1-9359-4258dae2f047-1790868433474.png", 60); console.log("Signed:", data, error); })();

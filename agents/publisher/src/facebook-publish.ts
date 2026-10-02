@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import * as dns from "node:dns";
+dns.setDefaultResultOrder("ipv4first");
 
 const DEFAULT_PAGE_ID = "785997304602172";
 
@@ -38,7 +40,7 @@ export async function publishToFacebook(message: string, imageBuffer?: Buffer, i
     if (imageBuffer) {
       postUrlStr = `https://graph.facebook.com/${version}/${pageId}/photos`;
       
-      const blob = new Blob([imageBuffer], { type: imageMime || "image/png" });
+      const blob = new Blob([imageBuffer as any], { type: imageMime || "image/png" });
       
       formData.append("source", blob, "image.png");
       formData.append("caption", message);
