@@ -9,10 +9,15 @@
     "scheduler": "tsx scheduler/src/worker.ts",
     "main": "tsx main/src/index.ts",
     "content": "tsx main/src/content-cli.ts",
-    "agent:server": "tsx main/src/server.ts"
+    "agent:server": "tsx main/src/server.ts",
+    "image:test": "tsx designer/src/image-test.ts",
+    "fb:test": "tsx publisher/src/facebook-test.ts",
+    "threads:token": "tsx publisher/src/threads-token.ts",
+    "threads:test": "tsx publisher/src/threads-test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "buffer": "^6.0.3",
     "dotenv": "^16.4.5",
     "playwright": "^1.47.0"
   },

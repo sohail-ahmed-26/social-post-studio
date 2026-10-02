@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
+import { toPng, toJpeg, toBlob } from "html-to-image";
 
 import { AppShell } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +14,7 @@ import {
   type PostStatus,
 } from "@/lib/posts";
 import { useActiveBrand } from "@/lib/use-brand";
+import { PostDesigner, type DesignSpec } from "@/components/post-designer";
 
 export const Route = createFileRoute("/_authenticated/create")({
   validateSearch: (search: Record<string, unknown>): { post?: string } => {
@@ -38,7 +40,7 @@ export const Route = createFileRoute("/_authenticated/create")({
   component: CreatePage,
 });
 
-type Template = { id: string; name: string; category: string };
+type Template = { id: string; name: string; category: string; html?: string };
 
 function CreatePage() {
   const { post: postId } = Route.useSearch();
@@ -52,16 +54,79 @@ function CreatePage() {
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [scheduledAt, setScheduledAt] = useState("");
   const [busy, setBusy] = useState(false);
+  
   const [generating, setGenerating] = useState(false);
+  const [generatingDesign, setGeneratingDesign] = useState(false);
   const [aiHeadline, setAiHeadline] = useState("");
   const [aiSubtext, setAiSubtext] = useState("");
+  const [designSpec, setDesignSpec] = useState<DesignSpec | null>(null);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState("");
+  
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  const downloadImage = async (format: "png" | "jpeg") => {
+    if (!previewRef.current) return;
+    try {
+      const dataUrl = format === "png" 
+        ? await toPng(previewRef.current, { cacheBust: true, backgroundColor: '#ffffff' })
+        : await toJpeg(previewRef.current, { quality: 0.95, cacheBust: true, backgroundColor: '#ffffff' });
+      
+      const link = document.createElement("a");
+      link.download = `post-design.${format}`;
+      link.href = dataUrl;
+      link.click();
+      toast.success(`Downloaded as ${format.toUpperCase()}`);
+    } catch (err) {
+      toast.error("Failed to download image");
+      console.error(err);
+    }
+  };
+
+  const saveAssetToDB = async () => {
+    if (!previewRef.current || !postId) {
+      toast.error("Save the post as a draft first to upload assets.");
+      return;
+    }
+    toast.info("Saving design to storage...");
+    try {
+      const blob = await toBlob(previewRef.current, { cacheBust: true, backgroundColor: '#ffffff' });
+      if (!blob) throw new Error("Failed to capture image");
+      
+      const { data: userAuth } = await supabase.auth.getUser();
+      const userId = userAuth.user?.id;
+      if (!userId) throw new Error("Not authenticated");
+
+      const fileName = `${postId}-${Date.now()}.png`;
+
+      const { error } = await supabase.storage
+        .from("post-images")
+        .upload(`${userId}/${fileName}`, blob, { contentType: 'image/png', upsert: true });
+
+      if (error) throw error;
+
+      const { data: publicUrlData } = supabase.storage.from("post-images").getPublicUrl(`${userId}/${fileName}`);
+      
+      const { error: dbError } = await supabase
+        .from("smm_post_assets")
+        .insert({
+          post_id: postId,
+          image_url: publicUrlData.publicUrl,
+        });
+        
+      if (dbError) throw dbError;
+      toast.success("Design saved to assets!");
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Failed to save asset: ${err.message}`);
+    }
+  };
 
   const { data: templates } = useQuery({
     queryKey: ["templates"],
     queryFn: async (): Promise<Template[]> => {
       const { data, error } = await supabase
         .from("smm_templates")
-        .select("id, name, category")
+        .select("id, name, category, html")
         .order("name");
       if (error) throw error;
       return (data ?? []) as Template[];
@@ -90,7 +155,31 @@ function CreatePage() {
       (PLATFORMS as readonly string[]).includes(p),
     ));
     setTemplateId(existing.template_id ?? null);
+    
+    // Attempt to load existing image asset
+    supabase.from("smm_post_assets").select("image_url").eq("post_id", postId!).order("created_at", { ascending: false }).limit(1).then(({ data }) => {
+      if (data && data.length > 0) {
+        setGeneratedImageUrl(data[0].image_url);
+      }
+    });
   }, [existing]);
+
+  // Load DesignSpec if the selected template is AI_GENERATED
+  useEffect(() => {
+    if (templateId && templates) {
+      const t = templates.find(t => t.id === templateId);
+      if (t && t.category === "AI_GENERATED" && t.html) {
+        try {
+          const spec = JSON.parse(t.html) as DesignSpec;
+          setDesignSpec(spec);
+        } catch(e) {
+          console.error("Failed to parse design spec", e);
+        }
+      } else {
+        setDesignSpec(null);
+      }
+    }
+  }, [templateId, templates]);
 
   function togglePlatform(platform: Platform) {
     setPlatforms((current) =>
@@ -177,7 +266,7 @@ function CreatePage() {
     setGenerating(true);
     try {
       const savedId = await save("draft", true);
-      if (!savedId) return; // toast already shown by save()
+      if (!savedId) return;
 
       const res = await fetch("http://127.0.0.1:8787/content", {
         method: "POST",
@@ -204,8 +293,24 @@ function CreatePage() {
         }
         setCaption(finalCaption);
       }
-      if (data.headline) setAiHeadline(data.headline);
-      if (data.subtext) setAiSubtext(data.subtext);
+      
+      const head = data.headline || "";
+      const sub = data.subtext || "";
+      if (head) setAiHeadline(head);
+      if (sub) setAiSubtext(sub);
+      
+      toast.success("AI Content generated! Generating image...");
+      
+      // Now call image agent
+      const imgRes = await fetch("http://127.0.0.1:8787/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: savedId, topic, headline: head }),
+      });
+      if (imgRes.ok) {
+        const imgData = await imgRes.json();
+        if (imgData.imageUrl) setGeneratedImageUrl(imgData.imageUrl);
+      }
 
       toast.success("AI Generation complete!");
     } catch (err: any) {
@@ -216,6 +321,57 @@ function CreatePage() {
       }
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function regenerateDesign() {
+    if (!postId || !aiHeadline) {
+      toast.error("You need to generate content first before regenerating design.");
+      return;
+    }
+    setGeneratingDesign(true);
+    try {
+      const savedId = await save("draft", true);
+      if (!savedId) return;
+
+      const imgRes = await fetch("http://127.0.0.1:8787/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: savedId, topic, headline: aiHeadline }),
+      });
+      if (!imgRes.ok) throw new Error("Failed to fetch image");
+      
+      const imgData = await imgRes.json();
+      if (imgData.imageUrl) setGeneratedImageUrl(imgData.imageUrl);
+      toast.success("Image regenerated!");
+    } catch (err: any) {
+      toast.error("Failed to regenerate design");
+    } finally {
+      setGeneratingDesign(false);
+    }
+  }
+
+  async function publishNow() {
+    const savedId = await save("draft", true);
+    if (!savedId) return;
+
+    setBusy(true);
+    try {
+      toast.info("Publishing to Facebook...");
+      const res = await fetch("http://127.0.0.1:8787/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: savedId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Failed to publish");
+      
+      toast.success(data.url ? `Published! ${data.url}` : "Published successfully!");
+      navigate({ to: "/library" as any });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to publish post");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -261,9 +417,9 @@ function CreatePage() {
                 type="button"
                 disabled={generating || busy}
                 onClick={generateWithAI}
-                className="mt-2 w-full rounded-lg bg-primary/10 text-primary py-2 text-sm font-medium transition-colors hover:bg-primary/20 disabled:opacity-60 flex items-center justify-center gap-2"
+                className="mt-2 w-full rounded-lg border border-input bg-card py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-60"
               >
-                {generating ? "Generating..." : "✨ Generate with AI"}
+                {generating ? "Generating..." : "Generate Content & Design"}
               </button>
             </div>
           </div>
@@ -292,8 +448,13 @@ function CreatePage() {
           </div>
 
           <div className="space-y-1.5">
-            <span className="eyebrow block">Template</span>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="flex items-center justify-between">
+              <span className="eyebrow block">Template</span>
+              <button onClick={regenerateDesign} disabled={generatingDesign || !aiHeadline} className="text-xs text-primary hover:underline disabled:opacity-50">
+                {generatingDesign ? "Regenerating..." : "Regenerate AI Design"}
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 max-h-48 overflow-y-auto">
               {(templates ?? []).map((template) => {
                 const active = templateId === template.id;
                 return (
@@ -320,12 +481,6 @@ function CreatePage() {
             <label className="eyebrow block" htmlFor="caption">
               Caption
             </label>
-            {aiHeadline && (
-              <div className="mb-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
-                <div className="font-semibold text-primary">{aiHeadline}</div>
-                <div className="text-muted-foreground text-xs mt-0.5">{aiSubtext}</div>
-              </div>
-            )}
             <textarea
               id="caption"
               rows={5}
@@ -359,11 +514,42 @@ function CreatePage() {
                   </div>
                 </div>
               </div>
-              <div className="grid aspect-square w-full place-items-center bg-secondary">
-                <span className="eyebrow">
-                  {templates?.find((t) => t.id === templateId)?.name ?? "No template"}
-                </span>
-              </div>
+              
+              {generatedImageUrl ? (
+                <div className="relative aspect-square w-full bg-secondary">
+                  <img src={generatedImageUrl} alt="Generated design" className="w-full h-full object-cover" />
+                </div>
+              ) : designSpec ? (
+                <PostDesigner ref={previewRef} spec={designSpec} headline={aiHeadline} subtext={aiSubtext} />
+              ) : (
+                <div 
+                  ref={previewRef} 
+                  style={{ backgroundColor: '#f1f5f9' }}
+                  className="relative overflow-hidden flex flex-col items-center justify-center aspect-square w-full p-8 text-center border-y border-border"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#e2e8f0] via-[#f8fafc] to-[#cbd5e1] opacity-70" />
+                  
+                  <div className="relative z-10 flex flex-col items-center justify-center space-y-4 w-full">
+                    {aiHeadline ? (
+                      <>
+                        <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight" style={{ color: '#0f172a', textWrap: "balance" }}>
+                          {aiHeadline}
+                        </h2>
+                        {aiSubtext && (
+                          <p className="text-sm sm:text-base font-medium" style={{ color: '#475569', textWrap: "balance" }}>
+                            {aiSubtext}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#64748b' }}>
+                        {templates?.find((t) => t.id === templateId)?.name ?? "Design Preview"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2 p-4">
                 <p className="text-sm leading-relaxed whitespace-pre-wrap">
                   {caption || "Your caption will appear here."}
@@ -386,12 +572,29 @@ function CreatePage() {
               </div>
             </div>
 
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => downloadImage("png")}
+                className="flex-1 rounded-lg border border-input bg-card py-2.5 text-xs font-medium hover:bg-accent transition-colors"
+              >
+                Download PNG
+              </button>
+              <button
+                type="button"
+                onClick={saveAssetToDB}
+                className="flex-1 rounded-lg border border-input bg-card py-2.5 text-xs font-medium hover:bg-accent transition-colors"
+              >
+                Save to Assets
+              </button>
+            </div>
+
             <div className="flex gap-2">
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => save("draft")}
-                className="flex-1 rounded-lg border border-input bg-card py-2.5 text-sm font-medium disabled:opacity-60"
+                className="flex-1 rounded-lg border border-input bg-card py-2.5 text-sm font-medium hover:bg-accent disabled:opacity-60 transition-colors"
               >
                 Save draft
               </button>
@@ -399,9 +602,17 @@ function CreatePage() {
                 type="button"
                 disabled={busy}
                 onClick={() => save("schedule")}
-                className="flex-1 rounded-lg bg-primary py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-60"
+                className="flex-1 rounded-lg border border-primary text-primary py-2.5 text-sm font-medium hover:bg-primary/10 disabled:opacity-60 transition-colors"
               >
                 Schedule
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={publishNow}
+                className="flex-1 rounded-lg bg-primary py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-60 transition-colors"
+              >
+                Publish Now
               </button>
             </div>
           </div>

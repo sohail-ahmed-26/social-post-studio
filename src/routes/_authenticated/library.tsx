@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { AppShell } from "@/components/app-shell";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,7 +46,9 @@ type PostRow = {
 
 function LibraryPage() {
   const { brandId } = useActiveBrand();
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<PostStatus | "all">("all");
+  const [retrying, setRetrying] = useState<string | null>(null);
 
   const { data: posts, isLoading } = useQuery({
     queryKey: ["posts", brandId],
@@ -60,6 +63,25 @@ function LibraryPage() {
       return (data ?? []) as PostRow[];
     },
   });
+
+  async function retryPost(postId: string) {
+    setRetrying(postId);
+    try {
+      const res = await fetch("http://127.0.0.1:8787/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Failed to retry publish");
+      toast.success(data.url ? `Published! ${data.url}` : "Published successfully!");
+      queryClient.invalidateQueries({ queryKey: ["posts", brandId] });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to retry publish");
+    } finally {
+      setRetrying(null);
+    }
+  }
 
   const rows = (posts ?? []).filter((p) => filter === "all" || p.status === filter);
 
@@ -125,11 +147,20 @@ function LibraryPage() {
                         {STATUS_LABELS[status]}
                       </span>
                     </td>
-                    <td className="px-5 py-4 text-right">
+                    <td className="px-5 py-4 text-right space-x-3">
+                      {status === "failed" && (
+                        <button
+                          onClick={() => retryPost(post.id)}
+                          disabled={retrying === post.id}
+                          className="text-xs font-medium text-destructive hover:underline disabled:opacity-50"
+                        >
+                          {retrying === post.id ? "Retrying..." : "Retry"}
+                        </button>
+                      )}
                       <Link
                         to="/create"
                         search={{ post: post.id }}
-                        className="text-xs font-medium text-primary"
+                        className="text-xs font-medium text-primary hover:underline"
                       >
                         Edit
                       </Link>
